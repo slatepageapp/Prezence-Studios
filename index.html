@@ -397,5 +397,134 @@ footer{padding:44px 0;border-top:1px solid var(--line);}
 const nav = document.getElementById('nav');
 window.addEventListener('scroll', () => { nav.classList.toggle('scrolled', window.scrollY > 40); });
 </script>
+<!-- ============================================================
+     PREZENCE — lead capture before booking
+     Intercepts every cal.com/prezence-studios link, captures the
+     lead into Supabase, then redirects to the booking calendar.
+     Additive only — existing buttons/booking are untouched.
+============================================================ -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<div id="pbModal" class="pb-overlay" role="dialog" aria-modal="true" aria-labelledby="pbTitle" aria-hidden="true">
+  <div class="pb-card">
+    <button type="button" class="pb-close" id="pbClose" aria-label="Close">&times;</button>
+    <p class="pb-eyebrow">Before we book you in</p>
+    <h2 id="pbTitle">A couple of quick details</h2>
+    <p class="pb-sub">Tell us who you are and we'll take you straight to the calendar.</p>
+    <form id="pbForm" novalidate>
+      <label for="pbName">Name</label>
+      <input id="pbName" type="text" autocomplete="name" placeholder="Your name" required>
+      <div class="pb-err" id="pbNameErr">Please enter your name.</div>
+
+      <label for="pbEmail">Email</label>
+      <input id="pbEmail" type="email" autocomplete="email" placeholder="you@example.com" required>
+      <div class="pb-err" id="pbEmailErr">Please enter a valid email.</div>
+
+      <label for="pbMsg">Message <span class="pb-opt">(optional)</span></label>
+      <textarea id="pbMsg" placeholder="Anything you'd like us to know?"></textarea>
+
+      <input id="pbUrl" type="text" tabindex="-1" autocomplete="off" class="pb-hp" aria-hidden="true">
+
+      <button type="submit" id="pbSubmit" class="pb-btn">Continue to booking</button>
+    </form>
+  </div>
+</div>
+
+<style>
+  .pb-overlay{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(58,35,23,.55);backdrop-filter:blur(3px);}
+  .pb-overlay.pb-open{display:flex;}
+  .pb-card{width:100%;max-width:440px;background:#fff;border:1px solid #EAD9C5;border-radius:16px;padding:30px;box-shadow:0 24px 60px -20px rgba(58,35,23,.5);font-family:'Inter',system-ui,sans-serif;color:#3A2317;position:relative;box-sizing:border-box;}
+  .pb-card *{box-sizing:border-box;}
+  .pb-close{position:absolute;top:12px;right:15px;background:none;border:none;font-size:26px;line-height:1;color:#7C6052;cursor:pointer;}
+  .pb-close:hover{color:#E2522B;}
+  .pb-eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#E2522B;margin:0 0 6px;}
+  .pb-card h2{font-family:'Fraunces',serif;font-weight:900;font-size:24px;line-height:1.1;margin:0 0 6px;}
+  .pb-sub{font-size:14px;color:#7C6052;margin:0 0 22px;}
+  .pb-card label{display:block;font-size:13px;font-weight:600;margin:0 0 6px;}
+  .pb-opt{font-weight:400;color:#7C6052;}
+  .pb-card input,.pb-card textarea{width:100%;padding:12px 14px;margin-bottom:6px;font-size:15px;font-family:inherit;color:#3A2317;background:#FFF8EF;border:1.5px solid #EAD9C5;border-radius:10px;transition:border-color .15s,box-shadow .15s;}
+  .pb-card input:focus,.pb-card textarea:focus{outline:none;border-color:#FF6B47;background:#fff;box-shadow:0 0 0 3px rgba(255,107,71,.18);}
+  .pb-card textarea{min-height:90px;resize:vertical;margin-bottom:16px;}
+  .pb-err{display:none;font-size:12px;color:#C0442E;margin:0 0 12px;}
+  .pb-err.pb-show{display:block;}
+  .pb-hp{position:absolute!important;left:-9999px!important;width:1px!important;height:1px!important;opacity:0!important;}
+  .pb-btn{width:100%;padding:14px;font-size:15px;font-weight:700;color:#fff;background:#FF6B47;border:none;border-radius:999px;cursor:pointer;transition:background .15s;font-family:inherit;}
+  .pb-btn:hover{background:#E2522B;}
+  .pb-btn:disabled{opacity:.65;cursor:not-allowed;}
+  @media (prefers-reduced-motion:reduce){.pb-overlay{backdrop-filter:none;}}
+</style>
+
+<script>
+(function(){
+  var CAL_FALLBACK = "https://cal.com/prezence-studios";
+  var SUPABASE_URL = "https://gstikeipclitrokdbofk.supabase.co";
+  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzdGlrZWlwY2xpdHJva2Rib2ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5MzcxMjMsImV4cCI6MjA5ODUxMzEyM30.vxSnLQ8Dz5M9A_sZy5OS4PppSPQ24rF6gk9Fhf-QFIU";
+
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  var overlay = document.getElementById("pbModal");
+  var form    = document.getElementById("pbForm");
+  var btn     = document.getElementById("pbSubmit");
+  var elName  = document.getElementById("pbName");
+  var elEmail = document.getElementById("pbEmail");
+  var elMsg   = document.getElementById("pbMsg");
+  var elUrl   = document.getElementById("pbUrl");
+  var nameErr = document.getElementById("pbNameErr");
+  var emailErr= document.getElementById("pbEmailErr");
+  var emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  var targetUrl = CAL_FALLBACK;
+
+  function openModal(url){
+    targetUrl = url || CAL_FALLBACK;
+    overlay.classList.add("pb-open");
+    overlay.setAttribute("aria-hidden","false");
+    setTimeout(function(){ elName.focus(); }, 50);
+  }
+  function closeModal(){
+    overlay.classList.remove("pb-open");
+    overlay.setAttribute("aria-hidden","true");
+  }
+
+  // Route EVERY booking link through the form first
+  document.addEventListener("click", function(e){
+    var a = e.target.closest ? e.target.closest('a[href*="cal.com/prezence-studios"]') : null;
+    if(!a) return;
+    e.preventDefault();
+    openModal(a.getAttribute("href"));
+  });
+
+  document.getElementById("pbClose").addEventListener("click", closeModal);
+  overlay.addEventListener("click", function(e){ if(e.target === overlay) closeModal(); });
+  document.addEventListener("keydown", function(e){ if(e.key === "Escape" && overlay.classList.contains("pb-open")) closeModal(); });
+
+  [elName, elEmail].forEach(function(el){
+    el.addEventListener("input", function(){ nameErr.classList.remove("pb-show"); emailErr.classList.remove("pb-show"); });
+  });
+
+  form.addEventListener("submit", async function(e){
+    e.preventDefault();
+    if(elUrl.value){ window.location.href = targetUrl; return; } // honeypot
+
+    var name  = elName.value.trim();
+    var email = elEmail.value.trim();
+    var msg   = elMsg.value.trim();
+    var ok = true;
+    if(!name){ nameErr.classList.add("pb-show"); ok = false; }
+    if(!emailRx.test(email)){ emailErr.classList.add("pb-show"); ok = false; }
+    if(!ok) return;
+
+    btn.disabled = true;
+    btn.textContent = "One moment…";
+
+    try{
+      await sb.from("leads").insert([{ name: name, email: email, message: msg || null, status: "new" }]);
+    }catch(err){
+      console.error("Lead insert failed:", err);
+    }finally{
+      window.location.href = targetUrl; // booking is never blocked
+    }
+  });
+})();
+</script>  
 </body>
 </html>
